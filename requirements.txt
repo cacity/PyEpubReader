@@ -1,0 +1,4 @@
+PyQt6
+beautifulsoup4
+edge_tts
+zipfile
