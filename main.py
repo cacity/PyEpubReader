@@ -9,7 +9,7 @@ import sys
 import re
 from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, \
     QWidget, QSplitter, QTableWidget, QTableWidgetItem, QTextBrowser, QFileDialog, QProgressBar, QComboBox, \
-    QFontDialog, QSlider
+    QFontDialog, QSlider, QDialog, QListWidget
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject
 from PyQt6.QtGui import QIcon, QFont
 import zipfile
@@ -17,6 +17,7 @@ import asyncio
 from bs4 import BeautifulSoup
 import edge_tts
 import shutil
+import json
 
 script_path = os.path.abspath(__file__)
 script_dir = os.path.dirname(script_path)
@@ -93,7 +94,7 @@ class EpubReader(QMainWindow):
         # 添加 QPushButton - 打开文件
         open_button = QPushButton("打开文件")
         open_button.clicked.connect(self.open_file)
-        open_button.setIcon(QIcon("./icons8-打开文件夹-240.png"))
+        open_button.setIcon(QIcon("./icon/icons8-打开文件夹-240.png"))
         hbox1.addWidget(open_button)
 
         font_button = QPushButton("选择字体", self)
@@ -116,13 +117,13 @@ class EpubReader(QMainWindow):
         # 创建增大字号按钮并绑定事件
         increase_font_button = QPushButton("增大字号")
         increase_font_button.clicked.connect(self.increase_font_size)
-        increase_font_button.setIcon(QIcon("./icons8-加大字体-96.png"))
+        increase_font_button.setIcon(QIcon("./icon/icons8-加大字体-96.png"))
         hbox1.addWidget(increase_font_button)
 
         # 创建减小字号按钮并绑定事件
         decrease_font_button = QPushButton("减小字号")
         decrease_font_button.clicked.connect(self.decrease_font_size)
-        decrease_font_button.setIcon(QIcon("./icons8-减小字体-96.png"))
+        decrease_font_button.setIcon(QIcon("./icon/icons8-减小字体-96.png"))
         hbox1.addWidget(decrease_font_button)
 
         # 添加 QPushButton - 语音播放
@@ -177,6 +178,18 @@ class EpubReader(QMainWindow):
         self.paragraph_spacing_slider.valueChanged.connect(self.update_paragraph_spacing)
         hbox3.addWidget(self.paragraph_spacing_slider)
 
+        # 添加收藏按钮
+        favorite_button = QPushButton("收藏", self)
+        favorite_button.clicked.connect(self.add_to_favorites)
+        hbox3.addWidget(favorite_button)
+
+        # 初始化收藏文件路径
+        self.favorites_file = os.path.join(script_dir, "book", "favorites.txt")
+
+        # 添加查看收藏按钮
+        view_favorites_button = QPushButton("查看收藏", self)
+        view_favorites_button.clicked.connect(self.show_favorites)
+        hbox3.addWidget(view_favorites_button)
 
         # 进度条初始化
         self.progress_bar = QProgressBar(self)
@@ -228,11 +241,106 @@ class EpubReader(QMainWindow):
 
         self.is_eye_protection_mode_active = False
 
+    def get_current_position(self):
+        # 获取 QTextBrowser 滚动条的当前位置
+        vertical_scrollbar = self.text_browser.verticalScrollBar()
+        position = vertical_scrollbar.value()
+        max_position = vertical_scrollbar.maximum()
 
-        # 窗口最大化显示
-        #self.showMaximized()
+        # 计算当前位置的百分比
+        position_percentage = (position / max_position) if max_position != 0 else 0
 
-        # 切换全屏模式的方法
+        '''return {
+            "position": position,
+            "position_percentage": position_percentage
+        }'''
+        return position
+
+    def go_to_position(self, position_info):
+        # 根据保存的位置信息滚动到指定位置
+        if "position" in position_info:
+            vertical_scrollbar = self.text_browser.verticalScrollBar()
+            vertical_scrollbar.setValue(position_info["position"])
+    def show_favorites(self):
+        # 加载收藏信息
+        favorites = self.load_favorites()
+
+        # 显示收藏对话框
+        dialog = FavoritesDialog(favorites, self)
+        # 连接信号到槽函数
+        dialog.open_favorite_signal.connect(self.open_favorite)
+        dialog.exec()
+
+    def open_favorite(self, favorite_info):
+        # 实现打开收藏项的操作
+        print(favorite_info)
+        book_name = favorite_info['book']
+        document_name = favorite_info['document']
+        position = int(favorite_info['position'])
+        # 选中书名列表中的特定书籍
+        index = self.file_combo.findText(book_name)
+        if index >= 0:
+            self.file_combo.setCurrentIndex(index)
+            self.auto_load_book(book_name)
+        self.auto_load_book(book_name)
+        # 然后找到对应的文档
+        for row in range(self.table_widget.rowCount()):
+            if self.table_widget.item(row, 0).text() == document_name:
+                self.table_widget.selectRow(row)
+                self.render_selected_file(self.table_widget.item(row, 0))
+                break
+
+        # 如果需要，可以将视图滚动到指定位置
+        #self.text_browser.scrollToPosition(position)  # 需要实现scrollToPosition方法
+        scrollbar = self.text_browser.verticalScrollBar()
+        scrollbar.setValue(position)
+        #self.scroll_to_percentage(position)
+        print(f"打开收藏项: {favorite_info}")
+
+    def scroll_to_percentage(self, percentage):
+        # 确保百分比是有效的值
+        if 0 <= float(percentage) <= 1:
+            # 获取QTextBrowser的垂直滚动条
+            scrollbar = self.text_browser.verticalScrollBar()
+            print(scrollbar.maximum())
+            print(scrollbar.minimum())
+            # 计算滚动条应该到达的位置
+            position =scrollbar.minimum() +  (scrollbar.maximum() - scrollbar.minimum()) * float(percentage) #scrollbar.minimum() + (scrollbar.maximum() - scrollbar.minimum()) * float(percentage) #scrollbar.minimum() +
+            # 设置滚动条的位置
+            scrollbar.setValue(position)
+    def load_favorites(self):
+        # 加载收藏信息的方法
+        favorites = []
+        try:
+            with open(self.favorites_file, "r") as file:
+                for line in file:
+                    favorites.append(json.loads(line.strip()))
+                    #print(favorites)
+        except FileNotFoundError:
+            print("收藏文件未找到")
+        return favorites
+
+    def add_to_favorites(self):
+        # 获取当前位置信息
+        current_book = self.file_combo.currentText()
+        current_document = self.table_widget.currentItem().text()
+        current_position = self.get_current_position()
+        print(current_position)
+        favorite_info = {
+            "book": current_book,
+            "document": current_document,
+            "position": current_position
+        }
+
+        # 将收藏信息保存到文件
+        '''with open(self.favorites_file, "a") as file:
+            file.write(json.dumps(favorite_info) + "\n")'''
+        # 将收藏信息作为JSON对象保存
+        with open(self.favorites_file, "a") as file:
+            json.dump(favorite_info, file)
+            file.write("\n")  # 添加换行符以分隔记录
+
+        print("已添加到收藏")
     def toggle_fullscreen(self):
         if self.isFullScreen():
             self.showNormal()
@@ -249,8 +357,6 @@ class EpubReader(QMainWindow):
         """
         self.text_browser.setStyleSheet(style_sheet)
 
-    # 更新行间距的方法
-    # 更新行间距的方法
     def update_line_spacing(self, value):
         self.line_spacing_label.setText(f"行间距: {value}")
         self.line_spacing = value
@@ -550,6 +656,45 @@ class EpubReader(QMainWindow):
             self.html_path_name = folders[0]
             self.update_file_list()
             self.render_selected_file()
+
+class FavoritesDialog(QDialog):
+    # 定义一个信号，传递收藏项的信息
+    open_favorite_signal = pyqtSignal(dict)
+    def __init__(self, favorites, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("收藏列表")
+        self.resize(400, 300)
+
+        layout = QVBoxLayout(self)
+
+        self.list_widget = QListWidget()
+        layout.addWidget(self.list_widget)
+
+        for favorite in favorites:
+            self.list_widget.addItem(f"{favorite['book']} - {favorite['document']} - {favorite['position']}")
+
+        self.open_button = QPushButton("打开选中项")
+        self.open_button.clicked.connect(self.open_selected_favorite)
+        layout.addWidget(self.open_button)
+    def open_selected_favorite(self):
+        selected_item = self.list_widget.currentItem()
+        if selected_item:
+            favorite_info = self.get_favorite_info(selected_item.text())
+            self.open_favorite_signal.emit(favorite_info)
+            self.hide()  # 隐藏对话框
+
+    def get_favorite_info(self, item_text):
+        # 假设 item_text 的格式是 "书名 - 文档名 - 位置"
+        parts = item_text.split(" - ")
+        if len(parts) == 3:
+            return {
+                "book": parts[0],
+                "document": parts[1],
+                "position": parts[2]
+            }
+        else:
+            return {}
+
 class AudioConversionWorker(QObject):
     conversion_progress = pyqtSignal(int)
 
@@ -600,6 +745,9 @@ class AudioConversionWorker(QObject):
                 text = text1.encode('utf-8', 'ignore').decode('utf-8')
                 # 移除空行和多余的空格
                 text = re.sub(r'\s+', ' ', text)
+                if text =='' :
+                    break
+
 
                 text_to_convert = text
 
