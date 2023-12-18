@@ -16,3 +16,11 @@
 ```
 pip install -r requirements.txt
 ```
+
+![image.png](https://raw.githubusercontent.com/cacity/py_test/master/h%3A/PicGo/20231218111353.png)
+
+## 版权声明
+
+相关的文章首发在微信公众号「峰哥Python」里，欢迎关注：
+
+![qrcode_for_gh_5f36206edaa5_430.jpg](https://raw.githubusercontent.com/cacity/py_test/master/h%3A/PicGo/qrcode_for_gh_5f36206edaa5_430.jpg)
