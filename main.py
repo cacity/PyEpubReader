@@ -9,7 +9,7 @@ import sys
 import re
 from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, \
     QWidget, QSplitter, QTableWidget, QTableWidgetItem, QTextBrowser, QFileDialog, QProgressBar, QComboBox, \
-    QFontDialog, QSlider, QDialog, QListWidget
+    QFontDialog, QSlider, QDialog, QListWidget, QStatusBar
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject
 from PyQt6.QtGui import QIcon, QFont
 import zipfile
@@ -59,9 +59,10 @@ class EpubReader(QMainWindow):
         # 修改QLineEdit为QComboBox
         self.file_combo = QComboBox()
         hbox1.addWidget(self.file_combo)
-        self.file_combo.setMinimumWidth(150)
+        self.file_combo.setMinimumWidth(50)
         self.file_combo.currentIndexChanged.connect(self.on_combo_changed)
 
+        #main_layout.addWidget(self.status_bar)
         self.Voice = QComboBox()
         voices = [
             "zh-CN-XiaoxiaoNeural",
@@ -88,23 +89,23 @@ class EpubReader(QMainWindow):
         ]
         self.Voice.addItems(voices)
         self.Voice.setCurrentIndex(3)
-        self.Voice.setMinimumWidth(100)
+        self.Voice.setMinimumWidth(50)
         hbox1.addWidget(self.Voice)
 
         # 添加 QPushButton - 打开文件
-        open_button = QPushButton("打开文件")
-        open_button.clicked.connect(self.open_file)
-        open_button.setIcon(QIcon("./icon/icons8-打开文件夹-240.png"))
-        hbox1.addWidget(open_button)
+        self.open_button = QPushButton("打开文件")
+        self.open_button.clicked.connect(self.open_file)
+        self.open_button.setIcon(QIcon("./icon/icons8-打开文件夹-240.png"))
+        hbox1.addWidget(self.open_button)
 
         font_button = QPushButton("选择字体", self)
         font_button.clicked.connect(self.select_and_apply_font)
         hbox1.addWidget(font_button)
 
-        eye_protection_button = QPushButton("护眼模式", self)
-        eye_protection_button.clicked.connect(self.set_eye_protection_mode)
-        eye_protection_button.setIcon(QIcon("./icon/icons8-眼睛-96.png"))
-        hbox1.addWidget(eye_protection_button)
+        self.eye_protection_button = QPushButton("护眼模式", self)
+        self.eye_protection_button.clicked.connect(self.set_eye_protection_mode)
+        self.eye_protection_button.setIcon(QIcon("./icon/icons8-眼睛-96.png"))
+        hbox1.addWidget(self.eye_protection_button)
 
         # 创建显示/隐藏左边栏的按钮
         self.toggle_sidebar_button = QPushButton("隐藏边栏", self)
@@ -115,22 +116,22 @@ class EpubReader(QMainWindow):
 
 
         # 创建增大字号按钮并绑定事件
-        increase_font_button = QPushButton("增大字号")
-        increase_font_button.clicked.connect(self.increase_font_size)
-        increase_font_button.setIcon(QIcon("./icon/icons8-加大字体-96.png"))
-        hbox1.addWidget(increase_font_button)
+        self.increase_font_button = QPushButton("增大字号")
+        self.increase_font_button.clicked.connect(self.increase_font_size)
+        self.increase_font_button.setIcon(QIcon("./icon/icons8-加大字体-96.png"))
+        hbox1.addWidget(self.increase_font_button)
 
         # 创建减小字号按钮并绑定事件
-        decrease_font_button = QPushButton("减小字号")
-        decrease_font_button.clicked.connect(self.decrease_font_size)
-        decrease_font_button.setIcon(QIcon("./icon/icons8-减小字体-96.png"))
-        hbox1.addWidget(decrease_font_button)
+        self.decrease_font_button = QPushButton("减小字号")
+        self.decrease_font_button.clicked.connect(self.decrease_font_size)
+        self.decrease_font_button.setIcon(QIcon("./icon/icons8-减小字体-96.png"))
+        hbox1.addWidget(self.decrease_font_button)
 
         # 添加 QPushButton - 语音播放
-        play_voice_button = QPushButton("电子书转音频")
-        play_voice_button.clicked.connect(self.play_voice)
-        play_voice_button.setIcon(QIcon("./icon/icons8-connect-240.png"))
-        hbox1.addWidget(play_voice_button)
+        self.play_voice_button = QPushButton("电子书转音频")
+        self.play_voice_button.clicked.connect(self.play_voice)
+        self.play_voice_button.setIcon(QIcon("./icon/icons8-connect-240.png"))
+        hbox1.addWidget(self.play_voice_button)
         # 添加停止转音频的按钮
         self.stop_button = QPushButton("停止转音频", self)
         self.stop_button.clicked.connect(self.stop_conversion)
@@ -200,6 +201,12 @@ class EpubReader(QMainWindow):
         # 创建 QSplitter
         self.splitter = QSplitter(Qt.Orientation.Horizontal)
         main_layout.addWidget(self.splitter)
+        self.status_bar = QStatusBar()
+        # 限制状态栏的最大高度
+        self.status_bar.setMaximumHeight(20)
+        # 使用样式表微调状态栏的外观（可选）
+        self.status_bar.setStyleSheet("QStatusBar { font-size: 10pt; }")
+        main_layout.addWidget(self.status_bar)
 
         # 创建 QTableWidget
         self.table_widget = QTableWidget()
@@ -557,6 +564,34 @@ class EpubReader(QMainWindow):
             # 这里您可以设置您希望的比例
             self.splitter.setSizes([int(self.width() * 1 / 12), int(self.width() * 11 / 12)])
         self.render_selected_file()
+        self.update_buttons_on_resize()
+        current_width = self.width()
+        self.status_bar.showMessage(f"当前窗口宽度：{current_width}")
+        super().resizeEvent(event)  # 确保调用基类的 resizeEvent
+
+    def update_buttons_on_resize(self):
+        # 设定一个宽度阈值，当窗口宽度小于这个值时，隐藏文字
+        width_threshold = 1200  # 可以根据需要调整这个值
+
+        # 获取当前窗口宽度
+        current_width = self.width()
+        #self.status_bar.showMessage(f"当前窗口宽度：{current_width}")
+        # 根据窗口宽度决定是否显示按钮文本
+        if current_width < width_threshold:
+            # 窗口宽度小于阈值，只显示图标
+            self.open_button.setText("")
+            self.eye_protection_button.setText("")
+            self.toggle_sidebar_button.setText("")
+            self.increase_font_button.setText("")
+            self.decrease_font_button.setText("")
+        else:
+            # 窗口宽度大于或等于阈值，显示图标和文本
+            self.open_button.setText("打开文件")
+            self.eye_protection_button.setText("护眼模式")
+            self.toggle_sidebar_button.setText("隐藏边栏")
+            self.increase_font_button.setText("增大字号")
+            self.decrease_font_button.setText("减小字号")
+
 
     def increase_font_size(self):
         """增大字号函数"""
