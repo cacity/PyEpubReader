@@ -17,7 +17,15 @@
 pip install -r requirements.txt
 ```
 
-![image.png](https://raw.githubusercontent.com/cacity/py_test/master/h%3A/PicGo/20231218111353.png)
+
+![](https://raw.githubusercontent.com/cacity/py_test/master/h%3A/PicGo/image-20231220231017669.png)
+
+![](https://raw.githubusercontent.com/cacity/py_test/master/h%3A/PicGo/image-20231220231358987.png)
+
+## 更新说明
+
+- 增加隐藏按钮文字，只显示图标
+- 增加状态栏，目前只显示了调试信息
 
 ## 版权声明
 
