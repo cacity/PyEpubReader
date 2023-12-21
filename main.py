@@ -98,9 +98,10 @@ class EpubReader(QMainWindow):
         self.open_button.setIcon(QIcon("./icon/icons8-打开文件夹-240.png"))
         hbox1.addWidget(self.open_button)
 
-        font_button = QPushButton("选择字体", self)
-        font_button.clicked.connect(self.select_and_apply_font)
-        hbox1.addWidget(font_button)
+        self.font_button = QPushButton("选择字体", self)
+        self.font_button.clicked.connect(self.select_and_apply_font)
+        self.font_button.setIcon(QIcon("./icon/icons8-font-96.png"))
+        hbox1.addWidget(self.font_button)
 
         self.eye_protection_button = QPushButton("护眼模式", self)
         self.eye_protection_button.clicked.connect(self.set_eye_protection_mode)
@@ -135,6 +136,7 @@ class EpubReader(QMainWindow):
         # 添加停止转音频的按钮
         self.stop_button = QPushButton("停止转音频", self)
         self.stop_button.clicked.connect(self.stop_conversion)
+        self.stop_button.setIcon(QIcon("./icon/icons8-stop-64.png"))
         hbox1.addWidget(self.stop_button)
 
         # 添加全屏模式按钮
@@ -584,6 +586,10 @@ class EpubReader(QMainWindow):
             self.toggle_sidebar_button.setText("")
             self.increase_font_button.setText("")
             self.decrease_font_button.setText("")
+            self.play_voice_button.setText("")
+            self.fullscreen_button.setText("")
+            self.stop_button.setText("")
+            self.font_button.setText("")
         else:
             # 窗口宽度大于或等于阈值，显示图标和文本
             self.open_button.setText("打开文件")
@@ -591,6 +597,10 @@ class EpubReader(QMainWindow):
             self.toggle_sidebar_button.setText("隐藏边栏")
             self.increase_font_button.setText("增大字号")
             self.decrease_font_button.setText("减小字号")
+            self.play_voice_button.setText("电子书转音频")
+            self.fullscreen_button.setText("全屏模式")
+            self.stop_button.setText("停止转音频")
+            self.font_button.setText("选择字体")
 
 
     def increase_font_size(self):
