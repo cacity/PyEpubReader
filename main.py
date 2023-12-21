@@ -213,8 +213,9 @@ class EpubReader(QMainWindow):
         # 创建 QTableWidget
         self.table_widget = QTableWidget()
         self.table_widget.setColumnCount(1)
+        self.table_widget.verticalHeader().setVisible(False)
         ####
-        self.table_widget.setHorizontalHeaderLabels([ "文件名"])
+        self.table_widget.setHorizontalHeaderLabels([ "章节"])
         # 连接文件列表的双击事件到渲染函数
         self.table_widget.itemDoubleClicked.connect(self.render_selected_file)
         self.splitter.addWidget(self.table_widget)
@@ -378,15 +379,24 @@ class EpubReader(QMainWindow):
         self.render_selected_file()
     def toggle_sidebar(self):
         # 检查左边栏当前是否可见
+        ll = len(self.toggle_sidebar_button.text())
         if self.splitter.sizes()[0] > 0:
             # 隐藏左边栏
             self.splitter.setSizes([0, 1])
-            self.toggle_sidebar_button.setText("显示边栏")
+
+            print(ll)
+            if ll > 1 :
+                self.toggle_sidebar_button.setText("显示边栏")
+            if ll == 0:
+                self.toggle_sidebar_button.setText("")
         else:
             # 显示左边栏
             #self.splitter.setSizes([1, 1])
             self.splitter.setSizes([int(self.width() * 1 / 12), int(self.width() * 11 / 12)])
-            self.toggle_sidebar_button.setText("隐藏边栏")
+            if ll > 1:
+                self.toggle_sidebar_button.setText("隐藏边栏")
+            if ll == 0:
+                self.toggle_sidebar_button.setText("")
     def set_eye_protection_mode(self):
         """设置护眼配色模式"""
         self.is_eye_protection_mode_active = True
