@@ -538,7 +538,8 @@ class EpubReader(QMainWindow):
         # 遍历文件列表
         for filename in xhtml_files:
             # 使用正则表达式查找文件名中的单独数字
-            new_name = re.sub(r'(?<=[^\d])(\d)(?=[^\d]|$)', '0\g<1>', filename)
+            # 在Windows 11 Python 3.12.1中运行时，需要在'0\g<1>'前加入r
+            new_name = re.sub(r'(?<=[^\d])(\d)(?=[^\d]|$)', r'0\g<1>', filename)
 
             # 如果新旧文件名不同，则重命名文件
             if new_name != filename:
