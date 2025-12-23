@@ -10,8 +10,8 @@ import re
 from PyQt6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, \
     QWidget, QSplitter, QTableWidget, QTableWidgetItem, QTextBrowser, QFileDialog, QProgressBar, QComboBox, \
     QFontDialog, QSlider, QDialog, QListWidget, QStatusBar
-from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject
-from PyQt6.QtGui import QIcon, QFont
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QTimer, QUrl
+from PyQt6.QtGui import QIcon, QFont, QFontDatabase, QTextCursor, QTextBlockFormat, QFontMetrics
 import zipfile
 import asyncio
 from bs4 import BeautifulSoup
@@ -103,6 +103,11 @@ class EpubReader(QMainWindow):
         self.font_button.setIcon(QIcon("./icon/icons8-font-96.png"))
         hbox1.addWidget(self.font_button)
 
+        self.import_font_button = QPushButton("导入字体", self)
+        self.import_font_button.clicked.connect(self.import_font)
+        self.import_font_button.setIcon(QIcon("./icon/icons8-opened-folder-240.png"))
+        hbox1.addWidget(self.import_font_button)
+
         self.eye_protection_button = QPushButton("护眼模式", self)
         self.eye_protection_button.clicked.connect(self.set_eye_protection_mode)
         self.eye_protection_button.setIcon(QIcon("./icon/icons8-眼睛-96.png"))
@@ -150,6 +155,7 @@ class EpubReader(QMainWindow):
         initial_margin = 10
         initial_line_spacing = 20
         initial_paragraph_spacing = 10
+        self.margin_value = initial_margin
 
         # 添加页边距调节标签和滑动条
         self.margin_label = QLabel(f"页边距: {initial_margin}")
@@ -188,6 +194,10 @@ class EpubReader(QMainWindow):
 
         # 初始化收藏文件路径
         self.favorites_file = os.path.join(script_dir, "book", "favorites.txt")
+        self.last_state_file = os.path.join(script_dir, "book", "last_state.json")
+        self.settings_file = os.path.join(script_dir, "book", "reader_settings.json")
+        self.fonts_dir = os.path.join(script_dir, "book", "fonts")
+        self.imported_font_files = []
 
         # 添加查看收藏按钮
         view_favorites_button = QPushButton("查看收藏", self)
@@ -242,14 +252,168 @@ class EpubReader(QMainWindow):
         self.html_path_name = []  # 保存一个html文件的路径
         self.thread = None
 
-        # 自动搜索并添加书籍到下拉列表
-        self.populate_books_combo()
         # 设置 QTextBrowser 的字体
-        #self.font = QFont("Arial", 14)
         self.font = QFont("Microsoft YaHei", 14)
         self.text_browser.setFont(self.font)
 
         self.is_eye_protection_mode_active = False
+        self.load_settings()
+        self.apply_font_size()
+        self.apply_text_browser_style()
+
+        # 自动搜索并添加书籍到下拉列表
+        self.populate_books_combo()
+
+    def apply_text_browser_style(self):
+        background = "#DCEBDD" if self.is_eye_protection_mode_active else "#FFFFFF"
+        foreground = "#1A3D14" if self.is_eye_protection_mode_active else "#000000"
+        self.text_browser.setStyleSheet(
+            f"QTextBrowser {{ padding: {self.margin_value}px; background-color: {background}; color: {foreground}; }}"
+        )
+
+    def closeEvent(self, event):
+        self.save_last_state()
+        self.save_settings()
+        super().closeEvent(event)
+
+    def load_settings(self):
+        try:
+            if not os.path.exists(self.settings_file):
+                return
+            with open(self.settings_file, "r", encoding="utf-8") as f:
+                data = json.load(f) or {}
+
+            self.margin_value = int(data.get("margin_value", self.margin_value))
+            self.line_spacing = int(data.get("line_spacing", self.line_spacing))
+            self.paragraph_spacing = int(data.get("paragraph_spacing", self.paragraph_spacing))
+            self.is_eye_protection_mode_active = bool(data.get("eye_protection", self.is_eye_protection_mode_active))
+
+            font_size = data.get("font_size")
+            if isinstance(font_size, int) and font_size > 0:
+                self.font_size = font_size
+
+            imported = data.get("imported_fonts") or []
+            if isinstance(imported, list):
+                self.imported_font_files = [str(p) for p in imported if p]
+
+            for rel_path in self.imported_font_files:
+                abs_path = os.path.join(script_dir, rel_path)
+                if os.path.exists(abs_path):
+                    QFontDatabase.addApplicationFont(abs_path)
+
+            font_family = data.get("font_family")
+            if isinstance(font_family, str) and font_family.strip():
+                self.font = QFont(font_family.strip())
+
+            self.margin_slider.setValue(self.margin_value)
+            self.line_spacing_slider.setValue(self.line_spacing)
+            self.paragraph_spacing_slider.setValue(self.paragraph_spacing)
+        except Exception:
+            return
+
+    def save_settings(self):
+        try:
+            book_dir = os.path.join(script_dir, "book")
+            if not os.path.exists(book_dir):
+                os.makedirs(book_dir)
+
+            data = {
+                "margin_value": int(self.margin_value),
+                "line_spacing": int(self.line_spacing),
+                "paragraph_spacing": int(self.paragraph_spacing),
+                "eye_protection": bool(self.is_eye_protection_mode_active),
+                "font_family": self.font.family() if hasattr(self, "font") else "",
+                "font_size": int(self.font_size),
+                "imported_fonts": list(self.imported_font_files),
+            }
+            with open(self.settings_file, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    def save_last_state(self):
+        try:
+            if not os.path.exists(os.path.join(script_dir, "book")):
+                os.makedirs(os.path.join(script_dir, "book"))
+
+            book = self.file_combo.currentText().strip() if self.file_combo.currentText() else ""
+            document_item = self.table_widget.currentItem()
+            document = document_item.text().strip() if document_item else ""
+            position = int(self.get_current_position())
+
+            if not book:
+                return
+
+            state = {"book": book, "document": document, "position": position}
+            with open(self.last_state_file, "w", encoding="utf-8") as f:
+                json.dump(state, f, ensure_ascii=False)
+        except Exception:
+            # 关闭时不打断退出流程
+            pass
+
+    def load_last_state(self):
+        try:
+            if not os.path.exists(self.last_state_file):
+                return None
+            with open(self.last_state_file, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return None
+
+    def restore_last_state(self):
+        state = self.load_last_state()
+        if not state:
+            return False
+
+        book = (state.get("book") or "").strip()
+        document = (state.get("document") or "").strip()
+        position = state.get("position")
+        try:
+            position = int(position)
+        except Exception:
+            position = 0
+
+        if not book:
+            return False
+
+        index = self.file_combo.findText(book)
+        if index < 0:
+            return False
+
+        old_block = self.file_combo.blockSignals(True)
+        try:
+            self.file_combo.setCurrentIndex(index)
+        finally:
+            self.file_combo.blockSignals(old_block)
+
+        self.auto_load_book(book)
+
+        target_item = None
+        if document:
+            for row in range(self.table_widget.rowCount()):
+                item = self.table_widget.item(row, 0)
+                if item and item.text() == document:
+                    target_item = item
+                    self.table_widget.setCurrentCell(row, 0)
+                    self.table_widget.selectRow(row)
+                    break
+
+        if target_item is None:
+            self.load_and_render_first_file()
+            target_item = self.table_widget.currentItem() or (self.table_widget.item(0, 0) if self.table_widget.rowCount() > 0 else None)
+        else:
+            self.render_selected_file(target_item)
+
+        if target_item is None:
+            return True
+
+        def apply_scroll():
+            scrollbar = self.text_browser.verticalScrollBar()
+            scrollbar.setValue(position)
+
+        QTimer.singleShot(0, apply_scroll)
+        QTimer.singleShot(100, apply_scroll)
+        return True
 
     def get_current_position(self):
         # 获取 QTextBrowser 滚动条的当前位置
@@ -360,12 +524,8 @@ class EpubReader(QMainWindow):
             self.fullscreen_button.setText("退出全屏")
     def update_margin(self, value):
         self.margin_label.setText(f"页边距: {value}")
-        style_sheet = f"""
-        QTextBrowser {{
-            padding: {value}px;
-        }}
-        """
-        self.text_browser.setStyleSheet(style_sheet)
+        self.margin_value = value
+        self.apply_text_browser_style()
 
     def update_line_spacing(self, value):
         self.line_spacing_label.setText(f"行间距: {value}")
@@ -400,22 +560,55 @@ class EpubReader(QMainWindow):
     def set_eye_protection_mode(self):
         """设置护眼配色模式"""
         self.is_eye_protection_mode_active = True
-        style_sheet = """
-        QTextBrowser {
-            background-color: #DCEBDD;  # 柔和的绿色背景
-            color: #1A3D14;            # 深绿色字体
-        }
-        """
-        #self.text_browser.setStyleSheet(style_sheet)
-        self.text_browser.setStyleSheet("color: #1A3D14; background-color: #DCEBDD;")
+        self.apply_text_browser_style()
         #self.render_selected_file()
 
 
     def select_and_apply_font(self):
-        self.font, ok = QFontDialog.getFont()
+        self.font, ok = QFontDialog.getFont(self.text_browser.font(), self)
         if ok:
-            self.text_browser.setFont(self.font)
+            if self.font.pointSize() and self.font.pointSize() > 0:
+                self.font_size = self.font.pointSize()
             self.apply_font_size()
+            self.render_selected_file()
+
+    def import_font(self):
+        font_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "导入字体文件",
+            "",
+            "Font Files (*.ttf *.otf *.ttc);;All Files (*)",
+        )
+        if not font_path:
+            return
+
+        try:
+            os.makedirs(self.fonts_dir, exist_ok=True)
+            font_filename = os.path.basename(font_path)
+            target_path = os.path.join(self.fonts_dir, font_filename)
+            if not os.path.exists(target_path):
+                shutil.copy2(font_path, target_path)
+
+            font_id = QFontDatabase.addApplicationFont(target_path)
+            if font_id < 0:
+                self.status_bar.showMessage("字体导入失败：不支持的字体文件")
+                return
+
+            families = QFontDatabase.applicationFontFamilies(font_id)
+            if not families:
+                self.status_bar.showMessage("字体导入失败：未识别到字体族名")
+                return
+
+            rel_path = os.path.relpath(target_path, start=script_dir)
+            if rel_path not in self.imported_font_files:
+                self.imported_font_files.append(rel_path)
+
+            self.font = QFont(families[0])
+            self.apply_font_size()
+            self.render_selected_file()
+            self.status_bar.showMessage(f"已导入字体：{families[0]}")
+        except Exception:
+            self.status_bar.showMessage("字体导入失败")
     def on_combo_changed(self, index):
         book_name = self.file_combo.currentText()
         # 根据选定的书名来加载和渲染内容
@@ -445,34 +638,38 @@ class EpubReader(QMainWindow):
 
         book_path = os.path.join("book", epub_folder)  ##书名目录
 
-        # 检查目标目录是否已存在
-        if not os.path.exists(book_path):
-            # 创建 book 目录
-            if not os.path.exists("book"):
-                os.makedirs("book")
+        # 创建 book/书名 目录（不存在则创建）
+        if not os.path.exists("book"):
+            os.makedirs("book")
 
-            # 复制 EPUB 文件到 book 目录
-            shutil.copy2(self.epub_file_path, os.path.join("book", epub_file))
-
-            # 将 EPUB 文件扩展名更改为 .zip
-            zip_file = os.path.splitext(epub_file)[0] + ".zip"
-            zip_file_path = os.path.join("book", zip_file)
-            os.rename(os.path.join("book", epub_file), zip_file_path)
-
-            # 解压缩 EPUB 文件
-            with zipfile.ZipFile(zip_file_path, 'r') as epub_zip:
+        # 如果书籍目录不存在或为空，则从epub直接解压（epub本质是zip）
+        needs_extract = (not os.path.exists(book_path)) or (os.path.isdir(book_path) and not os.listdir(book_path))
+        if needs_extract:
+            os.makedirs(book_path, exist_ok=True)
+            with zipfile.ZipFile(self.epub_file_path, 'r') as epub_zip:
                 epub_zip.extractall(book_path)
 
-            # 更新 QTableWidget 中的文件列表
-        # 搜索目录并添加到QComboBox中
+        # 后续渲染统一使用解压目录作为“书籍路径”
+        self.epub_file_path = os.path.join("book", epub_folder)
+
+        # 将“书名目录”加入书籍下拉框（避免混入html子目录路径）
+        old_block = self.file_combo.blockSignals(True)
+        try:
+            if self.file_combo.findText(epub_folder) < 0:
+                self.file_combo.addItem(epub_folder)
+            self.file_combo.setCurrentText(epub_folder)
+        finally:
+            self.file_combo.blockSignals(old_block)
+
+        # 搜索包含html/xhtml的目录并渲染
         folders = self.search_folders_with_html(book_path)
-        for folder in folders:
-            self.file_combo.addItem(folder)
+        if not folders:
+            self.status_bar.showMessage("未找到可渲染的章节目录（html/xhtml文件不足）")
+            return
         self.html_path_name = folders[0]
 
         self.update_file_list()
-        # 渲染 EPUB 文件中的第一个 .xhtml 文件
-        self.render_selected_file()
+        self.load_and_render_first_file()
 
     def search_folders_with_html(self, start_path):
         """搜索包含大于3个.html或.xhtml文件的目录"""
@@ -487,7 +684,11 @@ class EpubReader(QMainWindow):
 
     def render_selected_file(self, item=None):
         if item is None:
-            return
+            item = self.table_widget.currentItem()
+            if item is None and self.table_widget.rowCount() > 0:
+                item = self.table_widget.item(0, 0)
+            if item is None:
+                return
 
         # 获取双击或选中的文件名
         selected_file_name = item.text()
@@ -496,49 +697,100 @@ class EpubReader(QMainWindow):
         epub_file = os.path.basename(self.epub_file_path)
         epub_folder = os.path.splitext(epub_file)[0]
 
-        selected_file_path0 = self.html_path_name + '/' + selected_file_name
-        print(self.html_path_name)
-        selected_file_path = './' + re.sub(r'\\', '/', selected_file_path0)
+        selected_file_path = os.path.join(self.html_path_name, selected_file_name)
+        if not os.path.exists(selected_file_path):
+            return
 
-        # 获取样式表的完整路径
-        stylesheet_path0 = "./book/" + epub_folder + "/EPUB/"
-        if os.path.exists(stylesheet_path0):
-            stylesheet_path = "./book/" + epub_folder + "/EPUB/stylesheet.css"
-            page_styles = "./book/" + epub_folder + "/EPUB/page_styles.css"
+        html_base_dir = os.path.dirname(os.path.abspath(selected_file_path))
+        self.text_browser.document().setBaseUrl(QUrl.fromLocalFile(html_base_dir + os.sep))
+
+        # 读取选定文件的内容
+        with open(selected_file_path, "r", encoding="utf-8-sig") as file:
+            file_content = file.read()
+
+        soup = BeautifulSoup(file_content, "html.parser")
+
+        # Qt 的 QTextBrowser 不会加载 <link rel="stylesheet"> 的外部CSS：这里把它们读入并内联到 <style>
+        css_chunks = []
+        for link in soup.find_all("link"):
+            rel = link.get("rel") or []
+            rel_values = [v.lower() for v in (rel if isinstance(rel, list) else [rel])]
+            if "stylesheet" not in rel_values:
+                continue
+            href = link.get("href")
+            if not href:
+                continue
+            css_path = os.path.normpath(os.path.join(html_base_dir, href))
+            if os.path.exists(css_path):
+                try:
+                    with open(css_path, "r", encoding="utf-8-sig") as css_file:
+                        css_chunks.append(css_file.read())
+                except Exception:
+                    pass
+            link.decompose()
+
+        # 兜底样式（图片自适应）
+        css_chunks.append(
+            f"""
+            img {{ max-width: 100%; height: auto; }}
+            """
+        )
+
+        # 强制覆盖书籍自带 font-family，确保“选择字体/导入字体”可见
+        selected_family = self.text_browser.font().family()
+        if selected_family:
+            safe_family = selected_family.replace("\\", "\\\\").replace("\"", "\\\"")
+            css_chunks.append(f'body, div, p, span {{ font-family: "{safe_family}" !important; }}')
+
+        head = soup.head
+        if head is None:
+            head = soup.new_tag("head")
+            if soup.html:
+                soup.html.insert(0, head)
+            else:
+                soup.insert(0, head)
+
+        existing_style = head.find("style", attrs={"id": "pye-reader-style"})
+        if existing_style:
+            existing_style.string = "\n".join(css_chunks)
         else:
-            stylesheet_path = "./book/" + epub_folder + "/stylesheet.css"
-            page_styles = "./book/" + epub_folder + "/page_styles.css"
-        if os.path.exists(selected_file_path):
-            # 读取选定文件的内容
-            print(selected_file_path)
-            with open(selected_file_path, "r", encoding="utf-8") as file:
-                file_content = file.read()
-                # 添加 CSS 样式来使图片自适应宽度
-                img_style = "<style>img{max-width: 100%; height: auto;}</style>"
-                combined_style = f"""
-                        <style>
-                            img {{
-                                max-width: 100%;
-                                height: auto;
-                            }}
-                            p {{
-                                line-height: {self.line_spacing}px;
-                                margin-bottom: {self.paragraph_spacing}px;
-                            }}
-                        </style>
-                        """
+            style_tag = soup.new_tag("style", id="pye-reader-style")
+            style_tag.string = "\n".join(css_chunks)
+            head.append(style_tag)
 
-                file_content = combined_style + file_content
-                style_tag = f"<style>{stylesheet_path}</style>"
-                # 将样式内容添加到HTML头部
-                file_content = file_content.replace('href="../../stylesheet.css', f'href="{stylesheet_path}')
-                file_content = file_content.replace('href="../../page_styles.css', f'href="{page_styles}')
+        self.text_browser.setHtml(str(soup))
+        self.text_browser.document().setDefaultFont(self.text_browser.font())
+        self.apply_document_formatting()
 
-                # 修复相对图片路径
-                image_base_path = os.path.join("book", epub_folder, "EPUB", "images")
-                file_content = file_content.replace('src="../images/', f'src="{image_base_path}/')
-                # 在右侧渲染修复后的内容
-                self.text_browser.setHtml(file_content)
+    def apply_document_formatting(self):
+        doc = self.text_browser.document()
+        cursor = QTextCursor(doc)
+        cursor.beginEditBlock()
+
+        metrics = QFontMetrics(self.text_browser.font())
+        min_line_height = metrics.lineSpacing()
+        line_height = max(min_line_height, int(self.line_spacing))
+        indent_px = metrics.horizontalAdvance("中") * 2
+
+        block = doc.firstBlock()
+        while block.isValid():
+            text = block.text()
+            if text.strip():
+                cursor.setPosition(block.position())
+                cursor.select(QTextCursor.SelectionType.BlockUnderCursor)
+
+                fmt = cursor.blockFormat()
+                fmt.setBottomMargin(float(self.paragraph_spacing))
+                fmt.setLineHeight(float(line_height), int(QTextBlockFormat.LineHeightTypes.FixedHeight.value))
+                if fmt.alignment() & Qt.AlignmentFlag.AlignHCenter:
+                    fmt.setTextIndent(0.0)
+                else:
+                    fmt.setTextIndent(float(indent_px))
+
+                cursor.setBlockFormat(fmt)
+            block = block.next()
+
+        cursor.endEditBlock()
 
     def update_file_list(self):
         if self.epub_file_path is not None:
@@ -557,13 +809,15 @@ class EpubReader(QMainWindow):
         # 遍历文件列表
         for filename in xhtml_files:
             # 使用正则表达式查找文件名中的单独数字
-            new_name = re.sub(r'(?<=[^\d])(\d)(?=[^\d]|$)', '0\g<1>', filename)
+            new_name = re.sub(r'(?<=[^\d])(\d)(?=[^\d]|$)', r'0\g<1>', filename)
 
             # 如果新旧文件名不同，则重命名文件
             if new_name != filename:
                 os.rename(os.path.join(self.html_path_name, filename),
                           os.path.join(self.html_path_name, new_name))
+        all_files = os.listdir(self.html_path_name)
         xhtml_files1 = [file for file in all_files if file.endswith('.html') or file.endswith('.xhtml')]
+        xhtml_files1.sort()
         self.table_widget.setRowCount(len(xhtml_files1))
 
         for index, xhtml_file in enumerate(xhtml_files1):
@@ -600,6 +854,7 @@ class EpubReader(QMainWindow):
             self.fullscreen_button.setText("")
             self.stop_button.setText("")
             self.font_button.setText("")
+            self.import_font_button.setText("")
         else:
             # 窗口宽度大于或等于阈值，显示图标和文本
             self.open_button.setText("打开文件")
@@ -611,6 +866,7 @@ class EpubReader(QMainWindow):
             self.fullscreen_button.setText("全屏模式")
             self.stop_button.setText("停止转音频")
             self.font_button.setText("选择字体")
+            self.import_font_button.setText("导入字体")
 
 
     def increase_font_size(self):
@@ -627,26 +883,13 @@ class EpubReader(QMainWindow):
 
     def apply_font_size(self):
         """应用字体大小到 QTextBrowser"""
-        #self.text_browser.setStyleSheet(f"font-size: {self.font_size}px;")
-        """应用字体大小到 QTextBrowser"""
-        font = QFont()
+        font = QFont(self.font)
         font.setPointSize(self.font_size)
         font.setStyleStrategy(QFont.StyleStrategy.PreferAntialias)
-        self.text_browser.setFont(self.font)
-
         self.text_browser.setFont(font)
 
-        # 保持护眼模式的样式
-        if self.is_eye_protection_mode_active:
-            self.set_eye_protection_mode()
-        else:
-            # 如果还需要设置额外的样式，可以使用 setStyleSheet
-            # 例如，设置字体颜色、对齐方式等
-            additional_style = """
-                        color: #000000;  # 字体颜色
-                        text-align: justify;  # 文字对齐方式
-                        """
-            self.text_browser.setStyleSheet(additional_style)
+        # 保持护眼/页边距等样式
+        self.apply_text_browser_style()
         '''additional_style = """
             color: #000000;  # 字体颜色
             text-align: justify;  # 文字对齐方式
@@ -681,17 +924,33 @@ class EpubReader(QMainWindow):
 
     def populate_books_combo(self):
         book_dir = os.path.join(script_dir, "book")
-        if os.path.exists(book_dir):
-            for book_name in os.listdir(book_dir):
-                book_path = os.path.join(book_dir, book_name)
-                if os.path.isdir(book_path):
-                    self.file_combo.addItem(book_name)
+        if not os.path.exists(book_dir):
+            return
 
-            # 如果有书籍，自动加载第一本
-            if self.file_combo.count() > 0:
+        book_names = set()
+        for entry in os.listdir(book_dir):
+            full_path = os.path.join(book_dir, entry)
+            if os.path.isdir(full_path):
+                book_names.add(entry)
+                continue
+
+            entry_lower = entry.lower()
+            if entry_lower.endswith((".epub", ".zip")):
+                book_names.add(os.path.splitext(entry)[0])
+
+        old_block = self.file_combo.blockSignals(True)
+        try:
+            self.file_combo.clear()
+            for name in sorted(book_names):
+                self.file_combo.addItem(name)
+        finally:
+            self.file_combo.blockSignals(old_block)
+
+        if self.file_combo.count() > 0:
+            if not self.restore_last_state():
                 self.file_combo.setCurrentIndex(0)
                 self.auto_load_book(self.file_combo.currentText())
-        self.load_and_render_first_file()
+                self.load_and_render_first_file()
 
     def load_and_render_first_file(self):
         '''if self.table_widget.rowCount() > 0:
@@ -701,16 +960,36 @@ class EpubReader(QMainWindow):
             print("渲染文件：", first_item.text())  # 调试信息
             self.render_selected_file(first_item)
     def auto_load_book(self, book_name):
-        # 设置 epub 文件路径
-        self.epub_file_path = os.path.join(script_dir, "book", book_name)
-        #book_path = os.path.join(script_dir, "book", book_name)
-        book_path = os.path.relpath(os.path.join(script_dir, "book", book_name), start=os.curdir)
-        folders = self.search_folders_with_html(book_path)
-        print(folders)
-        if folders:
-            self.html_path_name = folders[0]
-            self.update_file_list()
-            self.render_selected_file()
+        book_dir = os.path.join(script_dir, "book")
+        extracted_dir = os.path.join(book_dir, book_name)
+        extracted_rel = os.path.join("book", book_name)
+
+        # 如果未解压（或目录为空），尝试从 book/<书名>.epub 或 book/<书名>.zip 解压
+        needs_extract = (not os.path.exists(extracted_dir)) or (os.path.isdir(extracted_dir) and not os.listdir(extracted_dir))
+        if needs_extract:
+            source_path = None
+            for ext in (".epub", ".zip"):
+                candidate = os.path.join(book_dir, f"{book_name}{ext}")
+                if os.path.exists(candidate):
+                    source_path = candidate
+                    break
+
+            if not source_path:
+                self.status_bar.showMessage(f"未找到书籍：{book_name}（缺少解压目录或同名 .epub/.zip）")
+                return
+
+            os.makedirs(extracted_dir, exist_ok=True)
+            with zipfile.ZipFile(source_path, 'r') as epub_zip:
+                epub_zip.extractall(extracted_dir)
+
+        self.epub_file_path = extracted_rel
+        folders = self.search_folders_with_html(extracted_rel)
+        if not folders:
+            self.status_bar.showMessage("未找到可渲染的章节目录（html/xhtml文件不足）")
+            return
+
+        self.html_path_name = folders[0]
+        self.update_file_list()
 
 class FavoritesDialog(QDialog):
     # 定义一个信号，传递收藏项的信息
